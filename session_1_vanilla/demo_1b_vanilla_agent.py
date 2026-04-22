@@ -127,7 +127,7 @@ def extract_json_from_response(text: str) -> dict | None:
         return json.loads(text)
     except json.JSONDecodeError:
         import re
-        match = re.search(r'\{[^{}]*\}', text)
+        match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
             try:
                 return json.loads(match.group())
