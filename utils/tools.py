@@ -45,8 +45,13 @@ def schedule_meeting(time: str, attendees: list[str], title: str = "AI Scheduled
     if isinstance(attendees, str):
         attendees = [a.strip() for a in attendees.split(",") if a.strip()]
         
-    link = create_calendar_event(time, attendees, title)
-    return f"Meeting scheduled successfully! Meet Link: {link}"
+    try:
+        link = create_calendar_event(time, attendees, title)
+        if "already scheduled" in link:
+            return link
+        return f"Meeting scheduled successfully! Meet Link: {link}"
+    except ValueError as e:
+        return str(e)
 
 @tool
 def draft_email_reply(task_description: str, draft_content: str) -> str:

@@ -54,8 +54,13 @@ def tool_schedule_meeting(**kwargs) -> str:
     else:
         attendees = list(attendees_raw)
 
-    link = create_calendar_event(time, attendees, title)
-    return f"✅ Meeting '{title}' scheduled at {time}. Calendar link: {link}"
+    try:
+        link = create_calendar_event(time, attendees, title)
+        if "already scheduled" in link:
+            return link
+        return f"✅ Meeting '{title}' scheduled at {time}. Calendar link: {link}"
+    except ValueError as e:
+        return f"❌ {str(e)}"
 
 
 # ── The Tool Map ──
