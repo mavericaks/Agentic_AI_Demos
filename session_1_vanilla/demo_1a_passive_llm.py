@@ -69,7 +69,15 @@ Please do the following:
 
     print("\n💬 [Step 3] LLM Response:")
     print("-" * 50)
-    print(response.text)
+    try:
+        print(response.text)
+    except ValueError:
+        # Gemini sometimes tries to generate a function call even without tools.
+        # This PROVES our point: the LLM wants to act but has no tools!
+        print("⚡ The LLM tried to generate a function call instead of text!")
+        print("   It literally WANTS to schedule the meeting but CANNOT.")
+        print(f"   Raw response parts: {response.candidates[0].content.parts}")
+        print(f"   Finish reason: {response.candidates[0].finish_reason}")
     print("-" * 50)
 
     # ── THE KEY LESSON ───────────────────────────────────────
