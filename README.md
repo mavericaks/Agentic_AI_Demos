@@ -61,9 +61,14 @@ Follow these steps carefully to configure your environment before running the de
 ### Step 1: Setup Environment & Install Dependencies
 We provide automated setup scripts to create an isolated Python virtual environment (`venv`) and install all dependencies safely.
 
+First, navigate into the cloned folder:
+```bash
+cd Agentic_AI_Demos
+```
+
 **On Windows:**
 ```cmd
-setup.bat
+.\setup.bat
 ```
 
 **On Linux/macOS:**

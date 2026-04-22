@@ -85,9 +85,14 @@ If one provider hits a limit, the agent seamlessly falls back to another!
 
 Run the setup script to create a virtual environment, install dependencies, and automatically create your `.env` file.
 
+First, make sure you are inside the project folder:
+```bash
+cd Agentic_AI_Demos
+```
+
 **On Windows:**
 ```cmd
-setup.bat
+.\setup.bat
 ```
 
 **On Linux/macOS:**
