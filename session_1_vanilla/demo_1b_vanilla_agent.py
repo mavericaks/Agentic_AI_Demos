@@ -15,44 +15,31 @@ Run:   python session_1_vanilla/demo_1b_vanilla_agent.py
 import os
 import sys
 import json
-import warnings
 
-warnings.filterwarnings("ignore")
-import logging
-logging.getLogger().setLevel(logging.ERROR)
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-
-# ── Make imports work from any sub-folder ────────────────────
+# ── Shared bootstrap (warnings, encoding, sys.path, dns, dotenv) ─
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import utils.bootstrap  # noqa: E402, F401
 
-import utils.dns_patch
-from dotenv import load_dotenv
 import google.generativeai as genai
 from utils.gmail_utils import fetch_recent_emails
 from utils.calendar_utils import create_calendar_event
+from utils.tools import format_emails
 
-load_dotenv()
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 
 # ═════════════════════════════════════════════════════════════
 #  TOOL REGISTRY
 #  These are the real Python functions the agent can call.
+#  NOTE: We intentionally avoid LangChain here to teach
+#  the raw mechanics of how an agent actually works.
 # ═════════════════════════════════════════════════════════════
 
 def tool_fetch_emails(**kwargs) -> str:
     """Fetch recent emails from Gmail and return them as formatted text."""
     limit = int(kwargs.get("limit", 5))
     emails = fetch_recent_emails(limit=limit)
-    result = ""
-    for i, email in enumerate(emails, 1):
-        result += f"\nEmail {i}:\n"
-        result += f"  From:    {email['from']}\n"
-        result += f"  Subject: {email['subject']}\n"
-        result += f"  Preview: {email['snippet']}\n"
-        result += f"  Date:    {email['date']}\n"
-    return result if result else "No emails found."
+    return format_emails(emails)
 
 
 def tool_schedule_meeting(**kwargs) -> str:
@@ -61,7 +48,7 @@ def tool_schedule_meeting(**kwargs) -> str:
     attendees_raw = kwargs.get("attendees", [])
     title = kwargs.get("title", "AI Scheduled Meeting")
 
-    # Handle both comma-separated string and list
+    # Handle both comma-separated string and list types passed by the LLM
     if isinstance(attendees_raw, str):
         attendees = [a.strip() for a in attendees_raw.split(",") if a.strip()]
     else:
@@ -71,7 +58,8 @@ def tool_schedule_meeting(**kwargs) -> str:
     return f"✅ Meeting '{title}' scheduled at {time}. Calendar link: {link}"
 
 
-# Map of tool names → (function, description)
+# ── The Tool Map ──
+# We create a dictionary so we can easily look up the function based on the string name the LLM provides.
 TOOLS = {
     "fetch_emails": {
         "function": tool_fetch_emails,
@@ -94,6 +82,8 @@ TOOLS = {
 # ═════════════════════════════════════════════════════════════
 #  SYSTEM PROMPT  —  tells the LLM how to use tools via JSON
 # ═════════════════════════════════════════════════════════════
+# This is the "brain conditioning". We tell the LLM exactly how we expect it to behave.
+# Crucially, we force it to reply in JSON so our Python script can easily parse its decisions.
 
 SYSTEM_PROMPT = """You are an AI email assistant.
 You have access to these tools:
@@ -123,7 +113,7 @@ RULES (follow these EXACTLY):
 def extract_json_from_response(text: str) -> dict | None:
     """Try to parse JSON from the LLM's response, handling markdown fences."""
     text = text.strip()
-    # Strip markdown code fences if present
+    # Strip markdown code fences if the LLM hallucinated them
     if text.startswith("```"):
         lines = text.split("\n")
         lines = [l for l in lines if not l.strip().startswith("```")]
@@ -131,7 +121,6 @@ def extract_json_from_response(text: str) -> dict | None:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Try to find JSON within the text
         import re
         match = re.search(r'\{[^{}]*\}', text)
         if match:
@@ -149,7 +138,9 @@ def run_vanilla_agent():
 
     model = genai.GenerativeModel("gemini-flash-latest")
 
-    # The conversation history — this IS the agent's "memory"
+    # ── CONVERSATION HISTORY (The Agent's Memory) ──
+    # Every time the LLM acts or sees a result, we append it to this list.
+    # This prevents the LLM from forgetting what it did 2 steps ago.
     conversation = [
         {"role": "user", "parts": [SYSTEM_PROMPT]},
         {"role": "model", "parts": ['{"tool": "acknowledge", "status": "ready"}']},
@@ -164,15 +155,19 @@ def run_vanilla_agent():
 
     print("\n🔄 [Agent] Starting the ReAct loop …\n")
 
+    # ── THE LOOP ──
+    # This loop is what turns a passive LLM into an active Agent.
     MAX_ITERATIONS = 10
     for i in range(1, MAX_ITERATIONS + 1):
         print(f"── Iteration {i} {'─' * 40}")
 
         # ── REASON: Ask the LLM what to do next ─────────────
+        # We pass the ENTIRE conversation history so it knows the current state.
         response = model.generate_content(conversation)
         raw = response.text.strip()
         print(f"   🧠 LLM says: {raw[:200]}")
 
+        # Convert the LLM's text output into a Python Dictionary
         action = extract_json_from_response(raw)
 
         if action is None:
@@ -193,11 +188,13 @@ def run_vanilla_agent():
             break
 
         # ── ACT: Execute the tool ────────────────────────────
+        # Here is where Python bridges the gap between text and action.
         if tool_name in TOOLS:
             args = action.get("args", {})
             print(f"   🔧 Calling tool: {tool_name}({args})")
 
             try:
+                # Actually execute the Python function mapping to the requested tool
                 result = TOOLS[tool_name]["function"](**args)
                 print(f"   📦 Result: {str(result)[:300]}")
             except Exception as e:
@@ -205,6 +202,7 @@ def run_vanilla_agent():
                 print(f"   {result}")
 
             # ── OBSERVE: Feed result back to the LLM ────────
+            # We append what the tool returned so the LLM can read it on the next loop iteration.
             conversation.append({"role": "model", "parts": [raw]})
             conversation.append({
                 "role": "user",
@@ -235,5 +233,3 @@ def run_vanilla_agent():
 
 if __name__ == "__main__":
     run_vanilla_agent()
-
-

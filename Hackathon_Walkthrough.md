@@ -44,6 +44,9 @@ Agentic AI Demos/
 
 ## 🔧 PHASE 0: One-Time Setup (Do this BEFORE the hackathon)
 
+> [!WARNING]
+> Read these steps carefully. The most common errors happen here during the Google Cloud setup!
+
 ### Step 0.1 — Get Google Cloud `credentials.json`
 
 This file lets the code read your Gmail and create Calendar events.
@@ -54,13 +57,13 @@ This file lets the code read your Gmail and create Calendar events.
 4. **Enable APIs:**
    - Sidebar → **APIs & Services → Library**
    - Search `Gmail API` → click → **Enable**
-   - Go back → search `Google Calendar API` → click → **Enable**
+   - Go back → search `Google Calendar API` → click → **Enable** (⚠️ Don't skip this!)
 5. **OAuth Consent Screen:**
    - Sidebar → **APIs & Services → OAuth consent screen**
    - Select **External** → Create
    - Fill: App name = `Inbox Intelligence Agent`, email fields = your email → Save
    - Skip "Scopes" → Save and Continue
-   - **Test Users** → Add Users → type YOUR Gmail address → Save and Continue
+   - **Test Users** → Add Users → type YOUR EXACT Gmail address → Save and Continue (⚠️ If you skip this, you will be blocked from logging in later!)
 6. **Download Credentials:**
    - Sidebar → **APIs & Services → Credentials**
    - Click **+ CREATE CREDENTIALS → OAuth client ID**
@@ -78,13 +81,28 @@ To avoid rate limits during the hackathon (a common issue!), the framework is bu
 
 If one provider hits a limit, the agent seamlessly falls back to another!
 
-### Step 0.3 — Create your `.env` file
+### Step 0.3 — Setup Environment & Install Dependencies
 
-Open a terminal in the project folder and copy the template:
-```bash
-copy .env.example .env
+Run the setup script to create a virtual environment, install dependencies, and automatically create your `.env` file.
+
+**On Windows:**
+```cmd
+setup.bat
 ```
-Open `.env` in a text editor and paste any keys you gathered. The router will magically load-balance any key prefixed with the provider name!
+
+**On Linux/macOS:**
+```bash
+bash setup.sh
+```
+
+> [!IMPORTANT]
+> **VITAL STEP:** Every time you open a new terminal to run a demo, you MUST activate the virtual environment! If you see `ModuleNotFoundError: No module named 'langchain'`, it's because you forgot this step.
+> - Windows: `venv\Scripts\activate`
+> - Linux/Mac: `source venv/bin/activate`
+
+### Step 0.4 — Configure your `.env` file
+
+Open the newly created `.env` file in a text editor and paste any keys you gathered. The router will magically load-balance any key prefixed with the provider name!
 ```
 # Add as many fallbacks as you want:
 GEMINI_API_KEY_1=paste-your-gemini-key-here
@@ -92,19 +110,15 @@ GROQ_API_KEY_1=paste-your-groq-key-here
 # LANGCHAIN_TRACING_V2=true  (Optional visual dashboard)
 ```
 
-### Step 0.5 — Install Dependencies
+### Step 0.5 — First-Time Google Auth
 
-```bash
-pip install -r requirements.txt
-```
-
-### Step 0.6 — First-Time Google Auth
-
-Run this once to create `token.json` (a browser window will pop up asking you to authorize):
+Make sure your `venv` is activated! Run this once to create `token.json` (a browser window will pop up asking you to authorize):
 ```bash
 python -c "from utils.auth import get_credentials; get_credentials()"
 ```
-A browser will open → sign in with your Gmail → click "Allow" → done!
+> [!TIP]
+> A browser will open. Sign in with your Gmail. You will see a scary screen that says **"Google hasn't verified this app"**. 
+> Click **Advanced** at the bottom → then click **Go to Inbox Intelligence Agent (unsafe)** → click **Allow** → done!
 
 ---
 
@@ -250,6 +264,13 @@ python session_4_learning/demo_4_reflexion.py
 ---
 
 ## 🏁 Quick Reference — All Commands
+
+To run the demos interactively cell-by-cell (Recommended):
+```bash
+jupyter lab
+```
+
+If you prefer to run the full scripts via the terminal:
 
 | Session | Demo | Command |
 |---------|------|---------|

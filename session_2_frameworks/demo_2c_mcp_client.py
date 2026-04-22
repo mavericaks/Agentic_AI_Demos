@@ -33,15 +33,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import utils.dns_patch
 from dotenv import load_dotenv
-
 load_dotenv()
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.prebuilt import create_react_agent
 
-# Path to the MCP server script
+# Path to the MCP server script (the external "tool provider")
 MCP_SERVER_SCRIPT = os.path.join(os.path.dirname(__file__), "mcp_server.py")
 
 
@@ -51,24 +49,27 @@ async def run_mcp_agent():
     print("=" * 60)
 
     # ── STEP 1: Connect to the MCP Server ────────────────────
-    #   The client starts the MCP server as a subprocess and
-    #   communicates over stdio. No HTTP, no REST — just a
-    #   standardised protocol pipe.
+    # In traditional development, if you want an AI to connect to Slack, Jira, and GitHub,
+    # you have to write 3 custom API adapters using LangChain @tools.
+    # With Model Context Protocol (MCP), you simply connect to an MCP server over stdio.
+    # It acts like a "USB-C" port for AI.
     print("\n🔌 [MCP] Connecting to the Inbox Intelligence MCP Server …")
 
+    # MultiServerMCPClient spins up the server script as a background process
+    # and communicates with it using standard input/output streams (stdio).
     client = MultiServerMCPClient(
         {
             "inbox_server": {
-                "command": sys.executable,       # python interpreter
-                "args": [MCP_SERVER_SCRIPT],     # our MCP server
-                "transport": "stdio",
+                "command": sys.executable,       # Run using the current python interpreter
+                "args": [MCP_SERVER_SCRIPT],     # The target server script
+                "transport": "stdio",            # Use standard I/O for communication
             }
         }
     )
     
     # ── STEP 2: Auto-discover tools ──────────────────────
-    #   THIS is the magic of MCP. We wrote ZERO @tool code
-    #   in this file. The tools come from the server.
+    # THIS is the magic of MCP. Notice how there are no @tool functions defined in this file!
+    # The client asks the server: "What tools do you have?" and the server sends back the list.
     tools = await client.get_tools()
 
     print(f"\n🔍 [MCP] Auto-discovered {len(tools)} tools:")
@@ -76,12 +77,14 @@ async def run_mcp_agent():
         print(f"   • {t.name}: {t.description[:80]}…")
 
     # ── STEP 3: Create the agent with discovered tools ───
+    # We pass the dynamically discovered tools directly into LangGraph.
     from utils.llm_router import get_routed_llm
     llm = get_routed_llm(role="worker_model")
     agent = create_react_agent(llm, tools)
 
     print("\n🤖 [Agent] Running with MCP-discovered tools …\n")
 
+    # Execute the agent normally. It will use the tools via the MCP server connection!
     result = await agent.ainvoke({
         "messages": [
             HumanMessage(content=(
@@ -128,5 +131,3 @@ async def run_mcp_agent():
 
 if __name__ == "__main__":
     asyncio.run(run_mcp_agent())
-
-

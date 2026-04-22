@@ -14,78 +14,21 @@ Run:   python session_2_frameworks/demo_2a_langchain_agent.py
 
 import os
 import sys
-import warnings
 
-warnings.filterwarnings("ignore")
-import logging
-logging.getLogger().setLevel(logging.ERROR)
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-
-# ── Make imports work from any sub-folder ────────────────────
+# ── Shared bootstrap (warnings, encoding, sys.path, dns, dotenv) ─
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import utils.dns_patch
-from dotenv import load_dotenv
-
-load_dotenv()
+import utils.bootstrap  # noqa: E402, F401
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
 
-# LangChain's prebuilt ReAct agent — it handles the loop for us!
+# LangGraph's prebuilt ReAct agent — it handles the while-loop for us!
 from langgraph.prebuilt import create_react_agent
 
-from utils.gmail_utils import fetch_recent_emails
-from utils.calendar_utils import create_calendar_event
-
-
-# ═════════════════════════════════════════════════════════════
-#  TOOLS  —  Just decorate normal functions with @tool
-#  LangChain reads the docstrings to tell the LLM what each
-#  tool does.  Compare this to the manual TOOLS dict in 1B!
-# ═════════════════════════════════════════════════════════════
-
-@tool
-def fetch_emails(limit: int = 5) -> str:
-    """Fetch the most recent emails from the user's Gmail inbox.
-
-    Args:
-        limit: Number of emails to fetch (default 5).
-
-    Returns:
-        A formatted string listing each email's sender, subject, and preview.
-    """
-    emails = fetch_recent_emails(limit=limit)
-    if not emails:
-        return "No emails found in the inbox."
-
-    result = ""
-    for i, email in enumerate(emails, 1):
-        result += f"\nEmail {i}:\n"
-        result += f"  From:    {email['from']}\n"
-        result += f"  Subject: {email['subject']}\n"
-        result += f"  Preview: {email['snippet']}\n"
-        result += f"  Date:    {email['date']}\n"
-    return result
-
-
-@tool
-def schedule_meeting(time: str, attendees: str, title: str) -> str:
-    """Schedule a meeting on Google Calendar and send invite emails.
-
-    Args:
-        time:      Meeting start time in 'YYYY-MM-DD HH:MM' format.
-        attendees: Comma-separated email addresses of attendees.
-        title:     Title of the meeting.
-
-    Returns:
-        Confirmation message with the calendar event link.
-    """
-    attendee_list = [a.strip() for a in attendees.split(",") if a.strip()]
-    link = create_calendar_event(time, attendee_list, title)
-    return f"✅ Meeting '{title}' scheduled at {time}. Link: {link}"
+# ── Shared tools (no more copy-paste!) ───────────────────────
+# Under the hood, these functions use LangChain's @tool decorator,
+# which automatically extracts their docstrings and parameters to feed to the LLM.
+from utils.tools import fetch_emails, schedule_meeting
 
 
 # ═════════════════════════════════════════════════════════════
@@ -97,19 +40,23 @@ def run_langchain_agent():
     print("  SESSION 2A : LangChain Agent")
     print("=" * 60)
 
-    # 1. Create the LLM
+    # 1. Create the LLM using LangChain's unified wrapper.
+    # We set temperature=0. This makes the LLM deterministic and precise.
+    # We don't want the agent to be "creative" or hallucinate when deciding which tool to call.
     llm = ChatGoogleGenerativeAI(
         model="gemini-flash-latest",
         temperature=0,
     )
 
-    # 2. List all tools
+    # 2. List all tools the agent is allowed to use.
     tools = [fetch_emails, schedule_meeting]
 
-    # 3. Create the agent — ONE LINE replaces the entire while-loop!
+    # 3. Create the agent — ONE LINE replaces the entire while-loop from Demo 1B!
+    # Under the hood, this function sets up the System Prompt, creates the JSON parser,
+    # and builds the loop that feeds function results back to the LLM.
     agent = create_react_agent(llm, tools)
 
-    # 4. Run the agent
+    # 4. Run the agent using .invoke()
     print("\n🤖 [Agent] Running LangChain ReAct agent …\n")
 
     result = agent.invoke({
@@ -123,7 +70,8 @@ def run_langchain_agent():
         ]
     })
 
-    # 5. Print the conversation
+    # 5. Print the conversation history
+    # The result contains the entire memory of the loop. We iterate through it to see what happened.
     print("─" * 50)
     print("📜 FULL AGENT CONVERSATION:")
     print("─" * 50)
@@ -136,7 +84,7 @@ def run_langchain_agent():
             print(f"\n[{role}]:")
             print(f"  {content}")
 
-        # Show tool calls if any
+        # Show tool calls if the agent decided to use one
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
                 print(f"  🔧 Tool Call: {tc['name']}({tc['args']})")
@@ -157,5 +105,3 @@ def run_langchain_agent():
 
 if __name__ == "__main__":
     run_langchain_agent()
-
-

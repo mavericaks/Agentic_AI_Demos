@@ -14,83 +14,54 @@
 Run:   python session_2_frameworks/demo_2b_rag_agent.py
 """
 
-import sys
 import os
-import socket
-import warnings
+import sys
 
-warnings.filterwarnings("ignore")
-import logging
-logging.getLogger().setLevel(logging.ERROR)
-
-# Set stdout to utf-8 to prevent charmap UnicodeEncodeErrors in Windows
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-
-import time
-# Highly resilient DNS retry monkeypatch for flaky network drops
-_orig_getaddrinfo = socket.getaddrinfo
-def _resilient_getaddrinfo(*args, **kwargs):
-    for attempt in range(5):
-        try:
-            return _orig_getaddrinfo(*args, **kwargs)
-        except socket.gaierror as e:
-            if attempt == 4:
-                raise e
-            time.sleep(1)
-socket.getaddrinfo = _resilient_getaddrinfo
-
-# ── Make imports work from any sub-folder ────────────────────
+# ── Shared bootstrap (warnings, encoding, sys.path, dns, dotenv) ─
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import utils.bootstrap  # noqa: E402, F401
 
-import utils.dns_patch
-from dotenv import load_dotenv
-
-load_dotenv()
-
-from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
-
 from langgraph.prebuilt import create_react_agent
 
-from utils.gmail_utils import fetch_recent_emails
-from utils.calendar_utils import create_calendar_event
+from utils.tools import fetch_emails, schedule_meeting
 
 # ═════════════════════════════════════════════════════════════
-#  STEP 1 : BUILD THE VECTOR STORE (one-time ingestion)
-#  This is the "Data Ingestion Pipeline" from the framework:
-#     Load → Chunk → Embed → Store
+#  STEP 1 : BUILD THE VECTOR STORE (Data Ingestion)
+#  This is the RAG pipeline: Load → Chunk → Embed → Store
 # ═════════════════════════════════════════════════════════════
 
 PREFS_FILE = os.path.join(os.path.dirname(__file__), "user_preferences.txt")
 CHROMA_DIR = os.path.join(os.path.dirname(__file__), ".chroma_db")
 
-
 def build_vector_store():
     """
     Ingest user_preferences.txt into a ChromaDB vector store.
-    This runs once; subsequent calls reuse the stored embeddings.
+    This converts human text into numbers (vectors) so the AI can search it mathematically.
     """
     print("📚 [RAG] Building vector store from user_preferences.txt …")
 
-    # LOAD: Read the raw text file
+    # 1. LOAD: Read the raw text file from the hard drive
     loader = TextLoader(PREFS_FILE, encoding="utf-8")
     documents = loader.load()
 
-    # CHUNK: Split into overlapping sections (512 chars, 20% overlap)
+    # 2. CHUNK: AI models have context limits. We split the document into smaller pieces.
+    # chunk_overlap=100 ensures that if a sentence spans two chunks, the context isn't lost.
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=512,
-        chunk_overlap=100,        # ~20% of 512
+        chunk_overlap=100,
         separators=["\n\n", "\n", ". ", " "],
     )
     chunks = splitter.split_documents(documents)
     print(f"   → Split into {len(chunks)} chunks")
 
-    # EMBED + STORE: Convert chunks to vectors and persist
+    # 3. EMBED + STORE: Convert the text chunks into mathematical vectors using an Embedding Model.
+    # Then save those vectors to ChromaDB (a specialized database for vectors).
     embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
     vectorstore = Chroma.from_documents(
         documents=chunks,
@@ -102,7 +73,7 @@ def build_vector_store():
 
 
 def load_vector_store():
-    """Load an existing ChromaDB store (or build if missing)."""
+    """Load an existing ChromaDB store from disk to save time, or build if missing."""
     embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
     if os.path.exists(CHROMA_DIR):
         return Chroma(
@@ -113,36 +84,11 @@ def load_vector_store():
 
 
 # ═════════════════════════════════════════════════════════════
-#  STEP 2 : DEFINE TOOLS  (including the RAG retriever tool)
+#  STEP 2 : RAG-SPECIFIC TOOL (Retrieval)
 # ═════════════════════════════════════════════════════════════
 
-# Global reference — initialised in main
+# Global reference to our database so the tool can access it
 _vectorstore = None
-
-
-@tool
-def fetch_emails(limit: int = 5) -> str:
-    """Fetch the most recent emails from the user's Gmail inbox.
-
-    Args:
-        limit: Number of emails to fetch (default 5).
-
-    Returns:
-        A formatted string listing each email's sender, subject, and preview.
-    """
-    emails = fetch_recent_emails(limit=limit)
-    if not emails:
-        return "No emails found in the inbox."
-
-    result = ""
-    for i, email in enumerate(emails, 1):
-        result += f"\nEmail {i}:\n"
-        result += f"  From:    {email['from']}\n"
-        result += f"  Subject: {email['subject']}\n"
-        result += f"  Preview: {email['snippet']}\n"
-        result += f"  Date:    {email['date']}\n"
-    return result
-
 
 @tool
 def search_user_preferences(query: str) -> str:
@@ -154,47 +100,24 @@ def search_user_preferences(query: str) -> str:
 
     Args:
         query: A natural language question about the user's preferences.
-               Examples: "meeting time restrictions", "priority rules",
-                         "how should I reply to emails"
-
-    Returns:
-        Relevant preference rules found in the user's personal knowledge base.
     """
     if _vectorstore is None:
         return "No preference database available."
 
-    # Top-k retrieval with k=3 (as recommended in the framework)
+    # 4. RETRIEVE: When the agent calls this tool, we perform a "similarity search".
+    # This finds the top 3 chunks (k=3) in the database that mathematically match the query.
     docs = _vectorstore.similarity_search(query, k=3)
 
     if not docs:
         return "No relevant preferences found for this query."
 
+    # We format the found documents and return them to the agent as text.
     result = "📋 USER PREFERENCES FOUND:\n"
     for i, doc in enumerate(docs, 1):
         result += f"\n--- Rule Set {i} ---\n"
         result += doc.page_content.strip()
         result += "\n"
     return result
-
-
-@tool
-def schedule_meeting(time: str, attendees: str, title: str) -> str:
-    """Schedule a meeting on Google Calendar and send invite emails.
-
-    IMPORTANT: Always call search_user_preferences first to check for
-    scheduling restrictions before calling this tool!
-
-    Args:
-        time:      Meeting start time in 'YYYY-MM-DD HH:MM' format.
-        attendees: Comma-separated email addresses of attendees.
-        title:     Title of the meeting.
-
-    Returns:
-        Confirmation message with the calendar event link.
-    """
-    attendee_list = [a.strip() for a in attendees.split(",") if a.strip()]
-    link = create_calendar_event(time, attendee_list, title)
-    return f"✅ Meeting '{title}' scheduled at {time}. Link: {link}"
 
 
 # ═════════════════════════════════════════════════════════════
@@ -208,17 +131,17 @@ def run_rag_agent():
     print("  SESSION 2B : RAG-Powered Agent (Semantic Memory)")
     print("=" * 60)
 
-    # Build / load the vector store
+    # Initialize the database
     _vectorstore = load_vector_store()
 
-    # Create the LLM
+    # Create the LLM using our Router (which handles rate limits gracefully)
     from utils.llm_router import get_routed_llm
     llm = get_routed_llm(role="worker_model")
 
-    # Tools — now includes the RAG retriever!
+    # The agent now has 3 tools: email fetching, calendar scheduling, AND preference searching.
     tools = [fetch_emails, search_user_preferences, schedule_meeting]
 
-    # System message instructing the agent to check preferences
+    # We use a System Message to strictly instruct the agent to use the search tool BEFORE acting.
     system_msg = SystemMessage(content=(
         "You are an intelligent email assistant with access to the user's "
         "personal preferences database. "
@@ -228,7 +151,7 @@ def run_rag_agent():
         "then suggest an alternative that complies with the rules."
     ))
 
-    # Create the agent
+    # Build the agent
     agent = create_react_agent(llm, tools)
 
     print("\n🤖 [Agent] Running RAG-powered agent …\n")
@@ -278,5 +201,3 @@ def run_rag_agent():
 
 if __name__ == "__main__":
     run_rag_agent()
-
-
