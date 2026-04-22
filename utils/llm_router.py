@@ -65,7 +65,7 @@ for key in github_keys:
 for key in sambanova_keys:
     model_list.append({
         "model_name": "master_model",
-        "litellm_params": {"model": "openai/DeepSeek-R1", "api_key": key, "api_base": "https://api.sambanova.ai/v1"}
+        "litellm_params": {"model": "openai/Meta-Llama-3.1-70B-Instruct", "api_key": key, "api_base": "https://api.sambanova.ai/v1"}
     })
 
 # Distribute load across all Groq Keys (Workers & Critiques & Master Fallback)
