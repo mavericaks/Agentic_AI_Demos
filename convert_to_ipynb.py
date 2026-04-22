@@ -25,15 +25,21 @@ def convert_demo(filepath):
         # Remove print headers like `print("=" * 60)` at the start of functions
         body = re.sub(r'^\s*print\("=" \* 60\)\n\s*print\("  SESSION.*?"\)\n\s*print\("=" \* 60\)\n', '', body, flags=re.MULTILINE)
         
-        # unindent 4 spaces
-        unindented = "\n".join([line[4:] if line.startswith("    ") else line for line in body.split("\n")])
+        # unindent 4 spaces and replace stray returns
+        unindented_lines = []
+        for line in body.split("\n"):
+            stripped = line[4:] if line.startswith("    ") else line
+            # Replace 'return' at the top level with a safe break/pass
+            if stripped.strip() == "return":
+                stripped = stripped.replace("return", "raise RuntimeError('Stop Execution')")
+            unindented_lines.append(stripped)
+            
+        unindented = "\n".join(unindented_lines)
         content = content[:func_match.start()] + unindented
 
     # 4. Split by large block comments or step headers
-    # Regex finds either:
-    # Match 1: # ════════... \n # HEADER \n # ════════...
-    # Match 2: # ── HEADER ───
-    split_pattern = r'(?:# ═{10,}\n(.*?)# ═{10,}\n|# ─{2,} (.*?) ─{2,}\n)'
+    # We remove DOTALL for the single-line headers to prevent catastrophic gobbling
+    split_pattern = r'(?:# ═{10,}\n(.*?)# ═{10,}\n|# ─{2,} ([^\n]*?) ─{2,}\n)'
     blocks = re.split(split_pattern, content, flags=re.DOTALL)
     
     # blocks structure from re.split with 2 capture groups:
