@@ -55,3 +55,6 @@ episodic_memory.json
 test_*.py
 list_models.py
 scratch/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/

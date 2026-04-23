@@ -32,6 +32,12 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
 
+# Fix Tailscale/IPv6 DNS conflicts — this subprocess doesn't inherit the parent's dns_patch
+try:
+    import utils.dns_patch
+except Exception:
+    pass
+
 from mcp.server.fastmcp import FastMCP
 from utils.gmail_utils import fetch_recent_emails
 from utils.calendar_utils import create_calendar_event
@@ -89,8 +95,12 @@ def schedule_calendar_event(time: str, attendees: str, title: str) -> str:
         Confirmation message with the calendar event link.
     """
     attendee_list = [a.strip() for a in attendees.split(",") if a.strip()]
-    link = create_calendar_event(time, attendee_list, title)
-    return f"✅ Meeting '{title}' scheduled at {time}. Link: {link}"
+    try:
+        link = create_calendar_event(time, attendee_list, title)
+        return f"✅ Meeting '{title}' scheduled at {time}. Link: {link}"
+    except ValueError as e:
+        # Calendar safeguards: duplicate event or 30-min buffer conflict
+        return f"⚠️ Scheduling conflict: {e}"
 
 
 @mcp.tool()
